@@ -4,6 +4,7 @@ import math
 import re
 from collections import Counter
 from typing import Any
+from .ingestion import embedding
 
 TOKEN = re.compile(r"[a-z0-9]+")
 STOPWORDS = {"a", "an", "and", "are", "do", "for", "how", "i", "in", "is", "of", "or", "the", "to", "what", "with"}
@@ -22,7 +23,11 @@ def score(question: str, document: dict[str, Any]) -> float:
     title_terms = set(tokenize(document.get("title", "")))
     title_bonus = sum(0.7 for term in query if term in title_terms)
     norm = math.sqrt(sum(v * v for v in query.values()) * sum(v * v for v in text.values()))
-    return (overlap + title_bonus) / norm if norm else 0.0
+    lexical = (overlap + title_bonus) / norm if norm else 0.0
+    query_vector = embedding(question)
+    doc_vector = embedding(f"{document.get('title', '')} {document.get('content', '')}")
+    semantic = sum(a * b for a, b in zip(query_vector, doc_vector))
+    return max(0.0, 0.72 * lexical + 0.28 * semantic)
 
 
 def answer_question(question: str, documents: list[dict[str, Any]], limit: int = 3) -> dict[str, Any]:

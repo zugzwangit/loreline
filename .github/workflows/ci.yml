@@ -2,24 +2,58 @@ name: ci
 on:
   push:
   pull_request:
+permissions: { contents: read }
+concurrency: { group: "ci-${{ github.ref }}", cancel-in-progress: true }
 jobs:
-  test:
+  frontend:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with: { go-version: "1.23" }
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.12" }
       - uses: pnpm/action-setup@v4
         with: { version: 11.9.0 }
       - uses: actions/setup-node@v4
-        with:
-          node-version: "22.14.0"
-          cache: pnpm
+        with: { node-version: "22.14.0", cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
-      - run: go test ./...
-        working-directory: services/gateway
-      - run: python -m unittest discover -s tests -v
-        working-directory: services/intelligence
+      - run: pnpm lint
+  go:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: services/gateway } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.23", cache-dependency-path: services/gateway/go.sum }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -e ../intelligence
+      - run: test -z "$(gofmt -l .)"
+      - run: go vet ./...
+      - run: go test -race -coverprofile=coverage.out ./...
+      - run: LORELINE_TEST_PYTHON=python go test -tags=integration ./internal/controlplane -run TestProductionLifecycle -v
+  python:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: services/intelligence } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip, cache-dependency-path: services/intelligence/pyproject.toml }
+      - run: pip install -e '.[test]'
+      - run: pytest --cov=loreline_ai --cov-report=term-missing --cov-fail-under=60
+      - run: python -m compileall -q loreline_ai
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install pyyaml
+      - run: python -c "import pathlib,yaml; d=yaml.safe_load(pathlib.Path('api/openapi.yaml').read_text()); assert d['openapi'].startswith('3.1'); assert len(d['paths']) >= 10"
+  images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with: { context: services/gateway, push: false, tags: loreline-gateway:test }
+      - uses: docker/build-push-action@v6
+        with: { context: services/intelligence, push: false, tags: loreline-intelligence:test }

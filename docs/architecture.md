@@ -1,34 +1,30 @@
 # Loreline architecture
 
-Loreline separates the fast public API path from retrieval logic and the browser experience.
-
 ```text
-Browser console
-    │
-    ▼
-Go gateway ───────► Python intelligence service
-    │                  │
-    ▼                  ▼
-review state       retrieval + grounded answers
+Signed-in web console
+        │ server-side authenticated proxy
+        ▼
+Go control plane ─────────────► Python intelligence API
+   │       │                         │
+   │       └── approved records ─────┘
+   ▼
+PostgreSQL ◄──── Python workers ────► encrypted object storage
+   │                 │
+   ├─ tenants        ├─ normalize / chunk / deduplicate
+   ├─ RBAC + keys    ├─ deterministic embeddings
+   ├─ sources/docs   ├─ index / retire / retry
+   ├─ durable jobs   └─ provider abstraction
+   ├─ review state
+   ├─ messages
+   └─ audit/feedback/outbox
 ```
 
-## Packages
+The Go control plane owns identity, tenant isolation, authorization, request validation, transactional lifecycle changes, audit, idempotency, conversations, feedback, and service orchestration. It is stateless outside PostgreSQL.
 
-- `app/` is the responsive operations console and interactive assistant demo.
-- `services/gateway/` is a Go HTTP API for dashboard data, knowledge lifecycle decisions, CORS, validation, and request routing.
-- `services/intelligence/` is a dependency-light Python package for deterministic ranking, grounded answer composition, and citations.
+The Python worker claims durable jobs with row locks. Ingestion extracts supported text, normalizes whitespace, generates overlapping semantic chunks, calculates content fingerprints and deterministic embeddings, detects exact duplicates, stores the raw source in encrypted object storage, and sends the candidate to human review. Approval activates chunks and enqueues indexing; retirement deactivates them without erasing audit history.
 
-The demo store is intentionally in memory, behind a small `Store` boundary. A production adapter can replace it with PostgreSQL without changing the handlers. The deterministic retrieval engine also provides a safe local default; a provider-backed generator can be added behind `answer_question` while preserving the same response contract.
+The intelligence API accepts only approved documents selected by the control plane. Its local provider uses weighted lexical and semantic retrieval and never invents an answer without evidence. An OpenAI-compatible provider can be enabled through configuration without changing the gateway contract. Answers, citations, confidence, latency, conversations, and feedback are persisted.
 
-## API surface
+The web console calls only its same-origin server proxy. Production credentials remain server-side. Without a configured gateway the UI explicitly identifies demo data instead of presenting it as durable state.
 
-| Method | Route | Purpose |
-|---|---|---|
-| GET | `/health` | Gateway health |
-| GET | `/v1/dashboard` | Operational metrics |
-| GET | `/v1/knowledge?status=review` | Filtered knowledge list |
-| GET | `/v1/knowledge/{id}` | Knowledge detail |
-| POST | `/v1/knowledge/{id}/decision` | Approve, edit, or reject |
-| POST | `/v1/assistant/ask` | Retrieve a grounded, cited answer |
-
-Every answer is built only from approved records supplied by the gateway. When retrieval finds no relevant source, the service returns an explicit ungrounded response with no citations.
+See [the OpenAPI contract](../api/openapi.yaml), [production operations](production.md), and [security model](security.md).

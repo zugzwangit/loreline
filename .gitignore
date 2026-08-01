@@ -46,3 +46,5 @@ next-env.d.ts
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.coverage
+*.egg-info/

@@ -1,0 +1,147 @@
+openapi: 3.1.0
+info:
+  title: Loreline Control Plane API
+  version: 1.0.0
+  description: Multi-tenant knowledge ingestion, review, retrieval, and feedback API.
+servers: [{ url: https://knowledge.example.com }]
+security: [{ bearerAuth: [] }]
+paths:
+  /livez:
+    get: { security: [], operationId: live, responses: { "200": { description: Process is alive } } }
+  /readyz:
+    get: { security: [], operationId: ready, responses: { "200": { description: Dependencies are ready }, "503": { $ref: "#/components/responses/Problem" } } }
+  /v1/dashboard:
+    get:
+      operationId: dashboard
+      responses: { "200": { description: Tenant metrics, content: { application/json: { schema: { $ref: "#/components/schemas/Dashboard" } } } }, "401": { $ref: "#/components/responses/Problem" } }
+  /v1/sources:
+    get:
+      operationId: listSources
+      responses: { "200": { description: Connected sources, content: { application/json: { schema: { type: object, properties: { items: { type: array, items: { $ref: "#/components/schemas/Source" } } } } } } } }
+    post:
+      operationId: createSource
+      x-required-role: admin
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/CreateSource" } } } }
+      responses: { "201": { description: Source created, content: { application/json: { schema: { $ref: "#/components/schemas/Source" } } } }, "422": { $ref: "#/components/responses/Problem" } }
+  /v1/documents:
+    post:
+      operationId: ingestDocument
+      x-required-role: admin
+      parameters: [{ in: header, name: Idempotency-Key, required: false, schema: { type: string, maxLength: 200 } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/IngestDocument" } } } }
+      responses: { "202": { description: Ingestion queued, content: { application/json: { schema: { $ref: "#/components/schemas/QueuedJob" } } } }, "409": { $ref: "#/components/responses/Problem" } }
+  /v1/sources/{id}/sync:
+    post:
+      operationId: syncSource
+      x-required-role: admin
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses: { "202": { description: Source synchronization queued, content: { application/json: { schema: { $ref: "#/components/schemas/QueuedJob" } } } }, "404": { $ref: "#/components/responses/Problem" } }
+  /v1/candidates:
+    get:
+      operationId: listCandidates
+      parameters:
+        - { in: query, name: status, schema: { type: string, enum: [pending, approved, rejected, superseded] } }
+        - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+      responses: { "200": { description: Review candidates, content: { application/json: { schema: { type: object, properties: { items: { type: array, items: { $ref: "#/components/schemas/Candidate" } } } } } } } }
+  /v1/candidates/{id}/decision:
+    post:
+      operationId: decideCandidate
+      x-required-role: reviewer
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/Decision" } } } }
+      responses: { "200": { description: Candidate decided, content: { application/json: { schema: { $ref: "#/components/schemas/Candidate" } } } }, "409": { $ref: "#/components/responses/Problem" } }
+  /v1/assistant/ask:
+    post:
+      operationId: ask
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [question], properties: { question: { type: string, minLength: 1, maxLength: 4000 } } } } } }
+      responses: { "200": { description: Grounded answer, content: { application/json: { schema: { $ref: "#/components/schemas/Answer" } } } }, "502": { $ref: "#/components/responses/Problem" } }
+  /v1/assistant/stream:
+    post:
+      operationId: streamAnswer
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [question], properties: { question: { type: string, maxLength: 4000 } } } } } }
+      responses: { "200": { description: "SSE events: meta, token, citations, and done", content: { text/event-stream: { schema: { type: string } } } } }
+  /v1/feedback:
+    post:
+      operationId: createFeedback
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [message_id, rating], properties: { message_id: { type: string, format: uuid }, rating: { type: integer, enum: [-1, 1] }, correction: { type: string, maxLength: 10000 } } } } } }
+      responses: { "201": { description: Feedback recorded }, "422": { $ref: "#/components/responses/Problem" } }
+  /v1/audit:
+    get:
+      operationId: auditLog
+      x-required-role: admin
+      responses: { "200": { description: Immutable tenant audit events }, "403": { $ref: "#/components/responses/Problem" } }
+  /v1/api-keys:
+    get:
+      operationId: listApiKeys
+      x-required-role: owner
+      responses: { "200": { description: Active keys; secret material is never returned } }
+    post:
+      operationId: createApiKey
+      x-required-role: owner
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [name, role], properties: { name: { type: string }, role: { type: string, enum: [viewer, reviewer, admin, owner] }, expires_at: { type: [string, "null"], format: date-time } } } } } }
+      responses: { "201": { description: Key created; `api_key` is returned only once }, "403": { $ref: "#/components/responses/Problem" } }
+  /v1/api-keys/{id}:
+    delete:
+      operationId: revokeApiKey
+      x-required-role: owner
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses: { "204": { description: Key revoked }, "409": { $ref: "#/components/responses/Problem" } }
+  /v1/jobs:
+    get:
+      operationId: listJobs
+      x-required-role: admin
+      parameters: [{ in: query, name: status, schema: { type: string, enum: [queued, running, succeeded, failed, dead] } }]
+      responses: { "200": { description: Durable job state and retry diagnostics } }
+  /v1/jobs/{id}/replay:
+    post:
+      operationId: replayJob
+      x-required-role: admin
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses: { "202": { description: Failed or dead job queued for replay }, "404": { $ref: "#/components/responses/Problem" } }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: Loreline API key }
+  responses:
+    Problem:
+      description: RFC 9457-style problem response
+      content: { application/json: { schema: { $ref: "#/components/schemas/Problem" } } }
+  schemas:
+    Problem:
+      type: object
+      required: [type, title, status, code, detail, request_id]
+      properties: { type: { type: string, format: uri }, title: { type: string }, status: { type: integer }, code: { type: string }, detail: {}, request_id: { type: string } }
+    Dashboard:
+      type: object
+      properties: { documents: { type: integer }, approved_knowledge: { type: integer }, needs_review: { type: integer }, active_jobs: { type: integer }, answer_quality: { type: number } }
+    Source:
+      type: object
+      required: [id, kind, name, status]
+      properties: { id: { type: string, format: uuid }, kind: { type: string }, name: { type: string }, status: { type: string }, last_synced_at: { type: [string, "null"], format: date-time }, last_error: { type: [string, "null"] } }
+    CreateSource:
+      type: object
+      required: [kind, name]
+      additionalProperties: false
+      properties: { kind: { type: string, enum: [ticketing, wiki, drive, webhook, upload, api] }, name: { type: string, maxLength: 160 }, config: { type: object } }
+    IngestDocument:
+      type: object
+      required: [title, content]
+      additionalProperties: false
+      properties: { source_id: { type: string, format: uuid }, external_id: { type: string }, title: { type: string, maxLength: 500 }, media_type: { type: string }, content: { type: string }, metadata: { type: object } }
+    QueuedJob:
+      type: object
+      properties: { document_id: { type: string, format: uuid }, job_id: { type: string, format: uuid }, status: { const: queued } }
+    Candidate:
+      type: object
+      properties: { id: { type: string, format: uuid }, document_id: { type: string, format: uuid }, title: { type: string }, content: { type: string }, status: { type: string }, confidence: { type: number, minimum: 0, maximum: 1 }, source: { type: string }, created_at: { type: string, format: date-time } }
+    Decision:
+      type: object
+      required: [action]
+      additionalProperties: false
+      properties: { action: { type: string, enum: [approve, edit, reject] }, content: { type: string }, note: { type: string, maxLength: 5000 } }
+    Citation:
+      type: object
+      properties: { id: { type: string }, title: { type: string }, source: { type: string } }
+    Answer:
+      type: object
+      required: [answer, confidence, grounded, citations]
+      properties: { answer: { type: string }, confidence: { type: number, minimum: 0, maximum: 1 }, grounded: { type: boolean }, citations: { type: array, items: { $ref: "#/components/schemas/Citation" } }, conversation_id: { type: string, format: uuid }, message_id: { type: string, format: uuid } }

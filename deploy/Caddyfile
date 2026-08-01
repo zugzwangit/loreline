@@ -1,0 +1,15 @@
+{
+  admin off
+}
+
+{$LORELINE_DOMAIN:localhost} {
+  encode zstd gzip
+  header {
+    Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    X-Content-Type-Options "nosniff"
+    Referrer-Policy "no-referrer"
+    -Server
+  }
+  reverse_proxy gateway:8080
+  log { format json }
+}

@@ -1,0 +1,9 @@
+global:
+  scrape_interval: 15s
+scrape_configs:
+  - job_name: loreline-gateway
+    static_configs: [{ targets: ["gateway:8080"] }]
+    metrics_path: /metrics
+  - job_name: loreline-intelligence
+    static_configs: [{ targets: ["intelligence:8090"] }]
+    metrics_path: /metrics

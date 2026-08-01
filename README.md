@@ -1,52 +1,60 @@
 # Loreline
 
-Trusted knowledge, ready to answer.
+Loreline is a production-oriented, multi-tenant knowledge operations platform. It ingests support tickets, policies, wiki pages, uploads, and API records; normalizes and deduplicates them in durable workers; routes candidates through human approval; indexes approved knowledge; and answers employee questions with traceable citations and feedback.
 
-Loreline turns resolved support tickets, policy documents, and wiki pages into reviewed, searchable knowledge. It gives operations teams a human approval queue and gives employees fast answers with traceable citations.
+## System packages
 
-## What is included
+- `services/gateway`: Go control plane, tenant isolation, hashed API-key authentication, RBAC, PostgreSQL migrations, idempotent writes, audit, rate limits, health, metrics, and graceful shutdown
+- `services/intelligence`: Python FastAPI retrieval service, provider abstraction, SSE streaming, text extraction, chunking, fingerprinting, embeddings, and durable job worker
+- `app`: responsive operations console with a server-only authenticated API proxy; it clearly reports whether it is connected to durable services
+- `api/openapi.yaml`: versioned HTTP contract
+- `deploy`: Compose stack, TLS edge, Prometheus/Grafana configuration, and hardened Kubernetes resources
+- `docs`: architecture, production, security, backup/restore, and incident response documentation
 
-- A polished responsive console with overview, knowledge library, review queue, and cited assistant flows
-- A Go gateway with knowledge lifecycle APIs, validation, CORS, health checks, and service orchestration
-- A Python retrieval service with deterministic ranking, grounded answer generation, and citation contracts
-- Unit, handler, integration, and server-render tests
-- Dockerfiles, Compose, GitHub Actions, environment examples, and architecture documentation
+## Local operational stack
 
-## Quick start
+Requirements: Docker Compose, or Node 22 + pnpm 11 + Go 1.23 + Python 3.12 + PostgreSQL 16.
 
-Prerequisites: Node 22+, pnpm 11+, Go 1.23+, and Python 3.11+.
+```bash
+cp .env.example .env
+# Replace every example secret, then:
+docker compose up --build -d
+docker compose exec gateway /lorelinectl bootstrap acme "Acme Labs"
+```
+
+The bootstrap command prints the only copy of the first owner API key. Store it in a secret manager. Configure the console proxy with `LORELINE_GATEWAY_URL` and `LORELINE_GATEWAY_TOKEN`; never expose the token through a `NEXT_PUBLIC_` variable.
+
+For UI development:
 
 ```bash
 pnpm install
-pnpm dev
+LORELINE_GATEWAY_URL=http://localhost:8088 LORELINE_GATEWAY_TOKEN=ll_live_xxx LORELINE_ALLOW_ANONYMOUS_PROXY=true pnpm dev
 ```
 
-The console opens at `http://localhost:3000`.
+Anonymous proxy mode is for local development only. The hosted private console uses the platform-authenticated viewer headers.
 
-Run the services in two terminals:
-
-```bash
-cd services/intelligence
-python -m loreline_ai.server
-```
-
-```bash
-cd services/gateway
-go run ./cmd/server
-```
-
-The gateway listens at `http://localhost:8080` and the intelligence service at `http://localhost:8090`. You can also start both with `docker compose up --build`.
-
-## Verify everything
+## Verification
 
 ```bash
 pnpm test
-cd services/gateway && go test ./...
-cd ../intelligence && python -m unittest discover -s tests -v
+cd services/intelligence && pip install -e '.[test]' && pytest --cov=loreline_ai
+cd ../gateway && go test -race ./...
+LORELINE_TEST_PYTHON=python go test -tags=integration ./internal/controlplane -run TestProductionLifecycle -v
 ```
 
-See [docs/architecture.md](docs/architecture.md) for service boundaries and API contracts.
+The integration test launches an isolated PostgreSQL instance and exercises real migrations, source creation, durable ingestion, the Python worker, candidate review, answer persistence, feedback, and audit retrieval.
 
-## Repository status
+## Production deployment
 
-The repository is initialized on `main`, includes a focused `.gitignore`, and has a CI workflow ready for GitHub. No credentials are required for the local demo.
+Use managed PostgreSQL and S3-compatible storage, a secret manager, TLS ingress/WAF, and centralized logs. Apply [deploy/kubernetes.yaml](deploy/kubernetes.yaml) after replacing image names, hostname, and the example secret. Run the migration Job before rolling out application pods.
+
+Read these before deployment:
+
+- [Architecture](docs/architecture.md)
+- [Production operations and SLOs](docs/production.md)
+- [Security model](docs/security.md)
+- [Backup and restore](docs/runbooks/backup-restore.md)
+- [Incident response](docs/runbooks/incident-response.md)
+- [OpenAPI contract](api/openapi.yaml)
+
+The repository is initialized on `main`, contains no application credentials, and includes CI, dependency updates, CodeQL, immutable migrations, container builds, and full-stack integration coverage.
