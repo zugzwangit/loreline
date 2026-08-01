@@ -1,0 +1,20 @@
+services:
+  intelligence:
+    build: ./services/intelligence
+    environment:
+      LORELINE_AI_ADDR: 0.0.0.0:8090
+    ports: ["8090:8090"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health')"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+  gateway:
+    build: ./services/gateway
+    environment:
+      LORELINE_AI_URL: http://intelligence:8090
+      LORELINE_ALLOWED_ORIGIN: http://localhost:3000
+    ports: ["8080:8080"]
+    depends_on:
+      intelligence:
+        condition: service_healthy
