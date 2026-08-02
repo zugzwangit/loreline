@@ -13,7 +13,7 @@ Loreline is a production-oriented, multi-tenant knowledge operations platform. I
 
 ## Local operational stack
 
-Requirements: Docker Compose, or Node 22 + pnpm 11 + Go 1.23 + Python 3.12 + PostgreSQL 16.
+Requirements: Docker Compose, or Node 22 + pnpm 11 + Go 1.26.5 + Python 3.12 + PostgreSQL 16.
 
 ```bash
 cp .env.example .env
@@ -22,7 +22,7 @@ docker compose up --build -d
 docker compose exec gateway /lorelinectl bootstrap acme "Acme Labs"
 ```
 
-The bootstrap command prints the only copy of the first owner API key. Store it in a secret manager. Configure the console proxy with `LORELINE_GATEWAY_URL` and `LORELINE_GATEWAY_TOKEN`; never expose the token through a `NEXT_PUBLIC_` variable.
+The bootstrap command prints the only copy of the first owner API key. Store it in a secret manager. Configure the console proxy with `LORELINE_GATEWAY_URL` and `LORELINE_GATEWAY_TOKEN`; never expose the token through a `NEXT_PUBLIC_` variable. For defense in depth, set `LORELINE_ALLOWED_USER_EMAILS` to the comma-separated operators permitted to use that proxy.
 
 For UI development:
 

@@ -16,6 +16,8 @@ import (
 )
 
 var ErrNotFound = errors.New("not found")
+var ErrConflict = errors.New("conflict")
+var ErrValidation = errors.New("validation")
 
 type Repository struct{ Pool *pgxpool.Pool }
 
@@ -88,9 +90,19 @@ func (r *Repository) RevokeAPIKey(ctx context.Context, p Principal, id, requestI
 
 func (r *Repository) Dashboard(ctx context.Context, tenant string) (map[string]any, error) {
 	out := map[string]any{}
-	var total, approved, review, jobs int
-	var quality float64
-	err := r.Pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM documents WHERE tenant_id=$1),(SELECT count(*) FROM candidates WHERE tenant_id=$1 AND status='approved'),(SELECT count(*) FROM candidates WHERE tenant_id=$1 AND status='pending'),(SELECT count(*) FROM jobs WHERE tenant_id=$1 AND status IN ('queued','running','failed')),COALESCE((SELECT avg(CASE rating WHEN 1 THEN 1.0 ELSE 0.0 END)*100 FROM feedback WHERE tenant_id=$1),100)`, tenant).Scan(&total, &approved, &review, &jobs, &quality)
+	var total, approved, review, jobs, workers, resolved int
+	var quality, freshness float64
+	var workspace string
+	err := r.Pool.QueryRow(ctx, `SELECT
+      (SELECT name FROM tenants WHERE id=$1),
+      (SELECT count(*) FROM documents WHERE tenant_id=$1),
+      (SELECT count(*) FROM candidates WHERE tenant_id=$1 AND status='approved'),
+      (SELECT count(*) FROM candidates WHERE tenant_id=$1 AND status='pending'),
+      (SELECT count(*) FROM jobs WHERE tenant_id=$1 AND status IN ('queued','running','failed')),
+      COALESCE((SELECT avg(CASE rating WHEN 1 THEN 1.0 ELSE 0.0 END)*100 FROM feedback WHERE tenant_id=$1),100),
+      (SELECT count(*) FROM worker_heartbeats WHERE heartbeat_at>now()-interval '45 seconds'),
+      (SELECT count(*) FROM messages WHERE tenant_id=$1 AND role='assistant'),
+      COALESCE((SELECT avg(CASE WHEN processed_at>now()-interval '90 days' THEN 100.0 ELSE 0.0 END) FROM documents WHERE tenant_id=$1 AND state='approved'),100)`, tenant).Scan(&workspace, &total, &approved, &review, &jobs, &quality, &workers, &resolved, &freshness)
 	if err != nil {
 		return nil, err
 	}
@@ -99,6 +111,10 @@ func (r *Repository) Dashboard(ctx context.Context, tenant string) (map[string]a
 	out["needs_review"] = review
 	out["active_jobs"] = jobs
 	out["answer_quality"] = quality
+	out["workers_online"] = workers
+	out["questions_resolved"] = resolved
+	out["freshness"] = freshness
+	out["workspace_name"] = workspace
 	return out, nil
 }
 
@@ -141,11 +157,24 @@ func (r *Repository) EnqueueSync(ctx context.Context, p Principal, id, requestID
 		return "", err
 	}
 	defer tx.Rollback(ctx)
-	var job string
-	err = tx.QueryRow(ctx, `INSERT INTO jobs(tenant_id,kind,payload) SELECT $1,'sync',jsonb_build_object('source_id',id::text) FROM sources WHERE id=$2 AND tenant_id=$1 AND status='active' RETURNING id::text`, p.TenantID, id).Scan(&job)
+	var exists bool
+	err = tx.QueryRow(ctx, `SELECT true FROM sources WHERE id=$1 AND tenant_id=$2 AND status='active' FOR UPDATE`, id, p.TenantID).Scan(&exists)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrNotFound
 	}
+	if err != nil {
+		return "", err
+	}
+	var activeJob string
+	err = tx.QueryRow(ctx, `SELECT id::text FROM jobs WHERE tenant_id=$1 AND kind='sync' AND payload->>'source_id'=$2 AND status IN ('queued','running','failed') LIMIT 1`, p.TenantID, id).Scan(&activeJob)
+	if err == nil {
+		return "", fmt.Errorf("%w: source synchronization is already active", ErrConflict)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return "", err
+	}
+	var job string
+	err = tx.QueryRow(ctx, `INSERT INTO jobs(tenant_id,kind,payload) VALUES($1,'sync',jsonb_build_object('source_id',$2::text)) RETURNING id::text`, p.TenantID, id).Scan(&job)
 	if err != nil {
 		return "", err
 	}
@@ -165,13 +194,28 @@ type IngestInput struct {
 }
 
 func (r *Repository) Ingest(ctx context.Context, p Principal, in IngestInput, idempotency, requestID string) (map[string]any, int, error) {
-	hash := sha256.Sum256([]byte(in.Content))
-	reqHash := hex.EncodeToString(hash[:])
+	contentSum := sha256.Sum256([]byte(in.Content))
+	contentHash := hex.EncodeToString(contentSum[:])
+	canonicalRequest, err := json.Marshal(in)
+	if err != nil {
+		return nil, 0, err
+	}
+	requestSum := sha256.Sum256(canonicalRequest)
+	reqHash := hex.EncodeToString(requestSum[:])
 	tx, err := r.Pool.Begin(ctx)
 	if err != nil {
 		return nil, 0, err
 	}
 	defer tx.Rollback(ctx)
+	if in.SourceID != "" {
+		var exists bool
+		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM sources WHERE id=$1 AND tenant_id=$2 AND status='active')`, in.SourceID, p.TenantID).Scan(&exists); err != nil {
+			return nil, 0, err
+		}
+		if !exists {
+			return nil, 0, ErrNotFound
+		}
+	}
 	if idempotency != "" {
 		var saved json.RawMessage
 		var status int
@@ -179,7 +223,7 @@ func (r *Repository) Ingest(ctx context.Context, p Principal, in IngestInput, id
 		err = tx.QueryRow(ctx, `SELECT request_hash,status_code,response FROM idempotency_keys WHERE tenant_id=$1 AND key=$2 AND expires_at>now()`, p.TenantID, idempotency).Scan(&stored, &status, &saved)
 		if err == nil {
 			if stored != reqHash {
-				return nil, 0, errors.New("idempotency key reused with different content")
+				return nil, 0, fmt.Errorf("%w: idempotency key reused with different content", ErrConflict)
 			}
 			var out map[string]any
 			json.Unmarshal(saved, &out)
@@ -190,7 +234,7 @@ func (r *Repository) Ingest(ctx context.Context, p Principal, in IngestInput, id
 		}
 	}
 	var docID, jobID string
-	err = tx.QueryRow(ctx, `INSERT INTO documents(tenant_id,source_id,external_id,title,media_type,content_sha256,metadata) VALUES($1,NULLIF($2,'')::uuid,NULLIF($3,''),$4,$5,$6,$7) RETURNING id::text`, p.TenantID, in.SourceID, in.ExternalID, in.Title, in.MediaType, reqHash, in.Metadata).Scan(&docID)
+	err = tx.QueryRow(ctx, `INSERT INTO documents(tenant_id,source_id,external_id,title,media_type,content_sha256,metadata) VALUES($1,NULLIF($2,'')::uuid,NULLIF($3,''),$4,$5,$6,$7) RETURNING id::text`, p.TenantID, in.SourceID, in.ExternalID, in.Title, in.MediaType, contentHash, in.Metadata).Scan(&docID)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -248,20 +292,20 @@ func (r *Repository) Decide(ctx context.Context, p Principal, id, action, conten
 		return Candidate{}, err
 	}
 	if before.Status != "pending" {
-		return Candidate{}, errors.New("candidate already decided")
+		return Candidate{}, fmt.Errorf("%w: candidate already decided", ErrConflict)
 	}
 	status := map[string]string{"approve": "approved", "edit": "approved", "reject": "rejected"}[action]
 	if status == "" {
-		return Candidate{}, errors.New("invalid decision")
+		return Candidate{}, fmt.Errorf("%w: invalid decision", ErrValidation)
 	}
 	if action == "edit" && content == "" {
-		return Candidate{}, errors.New("content required for edit")
+		return Candidate{}, fmt.Errorf("%w: content required for edit", ErrValidation)
 	}
 	if content == "" {
 		content = before.Content
 	}
 	var after Candidate
-	err = tx.QueryRow(ctx, `UPDATE candidates SET content=$1,status=$2,reviewer_id=NULLIF($3,'')::uuid,reviewed_at=now(),review_note=$4 WHERE id=$5 RETURNING id::text,document_id::text,title,content,status,confidence,'',created_at`, content, status, p.ActorID, note, id).Scan(&after.ID, &after.DocumentID, &after.Title, &after.Content, &after.Status, &after.Confidence, &after.Source, &after.CreatedAt)
+	err = tx.QueryRow(ctx, `UPDATE candidates SET content=$1,status=$2,reviewer_id=NULL,reviewer_actor_id=NULLIF($3,''),reviewed_at=now(),review_note=$4 WHERE id=$5 RETURNING id::text,document_id::text,title,content,status,confidence,'',created_at`, content, status, p.ActorID, note, id).Scan(&after.ID, &after.DocumentID, &after.Title, &after.Content, &after.Status, &after.Confidence, &after.Source, &after.CreatedAt)
 	if err != nil {
 		return Candidate{}, err
 	}
@@ -289,7 +333,7 @@ func (r *Repository) SearchApprovedDocuments(ctx context.Context, tenant, questi
 	rows, err := r.Pool.Query(ctx, `
 WITH q AS (SELECT websearch_to_tsquery('english', $2) AS query),
 ranked AS (
-  SELECT c.id::text AS id,c.title,c.content,COALESCE(s.name,'Direct upload') AS source,
+  SELECT c.id::text AS id,c.title,left(c.content,20000) AS content,COALESCE(s.name,'Direct upload') AS source,
          MAX(ts_rank_cd(ch.search_vector,q.query)) AS score,c.updated_at
   FROM candidates c
   JOIN documents d ON d.id=c.document_id
@@ -299,7 +343,7 @@ ranked AS (
   WHERE c.tenant_id=$1 AND c.status='approved' AND ch.search_vector @@ q.query
   GROUP BY c.id,c.title,c.content,s.name,c.updated_at
 ), fallback AS (
-  SELECT c.id::text AS id,c.title,c.content,COALESCE(s.name,'Direct upload') AS source,
+  SELECT c.id::text AS id,c.title,left(c.content,20000) AS content,COALESCE(s.name,'Direct upload') AS source,
          0::real AS score,c.updated_at
   FROM candidates c
   JOIN documents d ON d.id=c.document_id
@@ -351,7 +395,10 @@ func (r *Repository) SaveExchange(ctx context.Context, p Principal, question str
 }
 func (r *Repository) Feedback(ctx context.Context, p Principal, messageID string, rating int, correction string) (string, error) {
 	var id string
-	err := r.Pool.QueryRow(ctx, `INSERT INTO feedback(tenant_id,message_id,user_id,rating,correction) VALUES($1,$2,NULL,$3,NULLIF($4,'')) RETURNING id::text`, p.TenantID, messageID, rating, correction).Scan(&id)
+	err := r.Pool.QueryRow(ctx, `INSERT INTO feedback(tenant_id,message_id,user_id,rating,correction) SELECT $1,id,NULL,$3,NULLIF($4,'') FROM messages WHERE id=$2 AND tenant_id=$1 RETURNING id::text`, p.TenantID, messageID, rating, correction).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
 	return id, err
 }
 func (r *Repository) Audit(ctx context.Context, tenant string, limit int) ([]map[string]any, error) {

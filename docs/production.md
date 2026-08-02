@@ -12,9 +12,12 @@ The gateway fails closed when the database or credentials are absent. Every `/v1
 - S3-compatible object storage with versioning, server-side encryption, lifecycle rules, and public access disabled
 - A secret manager supplying database, object-store, service API, and optional generation-provider credentials
 - TLS termination, a private network between services, DNS, and an ingress/WAF
+- a private Sites access policy plus `LORELINE_ALLOWED_USER_EMAILS` for console authorization
 - Prometheus-compatible metrics collection and centralized JSON logs
 
 Do not deploy the example secrets or local Compose passwords. Run `lorelinectl migrate` as a single pre-deployment job, then deploy the API and workers. Run `lorelinectl bootstrap <slug> <name>` once to create the first tenant and owner API key; capture the key at creation because only its SHA-256 digest is stored.
+
+Set `LORELINE_CONNECTOR_ALLOWED_HOSTS` to the exact external hostnames workers may contact. Connector credentials must be injected under names beginning with `LORELINE_CONNECTOR_`; source records store only those environment-variable references. Workers fail startup when object storage is absent unless the explicit test-only database mode is enabled.
 
 ## Scaling
 

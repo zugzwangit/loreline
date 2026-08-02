@@ -16,7 +16,7 @@ PostgreSQL ◄──── Python workers ────► encrypted object stora
    ├─ durable jobs   └─ provider abstraction
    ├─ review state
    ├─ messages
-   └─ audit/feedback/outbox
+   └─ audit/feedback
 ```
 
 The Go control plane owns identity, tenant isolation, authorization, request validation, transactional lifecycle changes, audit, idempotency, conversations, feedback, and service orchestration. It is stateless outside PostgreSQL.

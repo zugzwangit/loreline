@@ -1,11 +1,12 @@
 from __future__ import annotations
-import os
 from typing import Any
 import httpx
+from loreline_ai.config import Settings
 from .base import SourceRecord
+from .security import credential, validate_url
 
 class ConfluenceConnector:
-    def __init__(self,config:dict[str,Any]):self.base=str(config["base_url"]).rstrip("/");self.space=str(config.get("space_key",""));self.token=os.getenv(str(config.get("credential_env","")),"")
+    def __init__(self,config:dict[str,Any],cfg:Settings):self.base=validate_url(str(config["base_url"]).rstrip("/"),cfg);self.space=str(config.get("space_key",""));self.token=credential(config)
     def fetch(self,cursor:dict[str,Any])->tuple[list[SourceRecord],dict[str,Any]]:
         start=int(cursor.get("start",0));params={"start":start,"limit":100,"expand":"body.storage,version","type":"page"}
         if self.space:params["spaceKey"]=self.space

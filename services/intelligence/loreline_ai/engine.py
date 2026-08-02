@@ -40,8 +40,17 @@ def answer_question(question: str, documents: list[dict[str, Any]], limit: int =
             "citations": [],
             "grounded": False,
         }
-    statements = [doc.get("content", "").strip() for _, doc in selected if doc.get("content", "").strip()]
-    answer = " ".join(statements)
+    query_terms = set(tokenize(question))
+    statements: list[str] = []
+    cited: list[dict[str, Any]] = []
+    for _, doc in selected:
+        sentences = [part.strip() for part in re.split(r"(?<=[.!?])\s+|\n+", doc.get("content", "")) if part.strip()]
+        matches = sorted(sentences, key=lambda sentence: len(query_terms & set(tokenize(sentence))), reverse=True)
+        chosen = " ".join(matches[:2]).strip()
+        if chosen:
+            statements.append(chosen)
+            cited.append(doc)
+    answer = " ".join(statements)[:4000]
     confidence = min(0.99, 0.72 + sum(value for value, _ in selected) / (4 * len(selected)))
-    citations = [{"id": doc.get("id", ""), "title": doc.get("title", "Untitled"), "source": doc.get("source", "Unknown")} for _, doc in selected]
+    citations = [{"id": doc.get("id", ""), "title": doc.get("title", "Untitled"), "source": doc.get("source", "Unknown")} for doc in cited]
     return {"answer": answer, "confidence": round(confidence, 2), "citations": citations, "grounded": True}

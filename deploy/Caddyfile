@@ -10,6 +10,11 @@
     Referrer-Policy "no-referrer"
     -Server
   }
-  reverse_proxy gateway:8080
+  handle /metrics {
+    respond "Not found" 404
+  }
+  handle {
+    reverse_proxy gateway:8080
+  }
   log { format json }
 }

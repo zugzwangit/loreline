@@ -16,6 +16,7 @@ data:
   LORELINE_RATE_PER_MINUTE: "120"
   LORELINE_PROVIDER: extractive
   LORELINE_OBJECT_BUCKET: loreline-documents
+  LORELINE_CONNECTOR_ALLOWED_HOSTS: example.atlassian.net,example.zendesk.com,api.example.com
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -30,7 +31,7 @@ spec:
       securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
       containers:
         - name: gateway
-          image: ghcr.io/your-org/loreline-gateway:1.0.0
+          image: ghcr.io/your-org/loreline-gateway:1.1.0
           ports: [{ name: http, containerPort: 8080 }]
           envFrom: [{ configMapRef: { name: loreline-config } }, { secretRef: { name: loreline-secrets } }]
           env: [{ name: LORELINE_AUTO_MIGRATE, value: "false" }]
@@ -51,7 +52,7 @@ spec:
       serviceAccountName: loreline
       containers:
         - name: migrate
-          image: ghcr.io/your-org/loreline-gateway:1.0.0
+          image: ghcr.io/your-org/loreline-gateway:1.1.0
           command: ["/lorelinectl", "migrate"]
           envFrom: [{ secretRef: { name: loreline-secrets } }]
           securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
@@ -74,7 +75,7 @@ spec:
       securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
       containers:
         - name: intelligence
-          image: ghcr.io/your-org/loreline-intelligence:1.0.0
+          image: ghcr.io/your-org/loreline-intelligence:1.1.0
           command: [loreline-intelligence]
           ports: [{ name: http, containerPort: 8090 }]
           envFrom: [{ configMapRef: { name: loreline-config } }, { secretRef: { name: loreline-secrets } }]
@@ -102,7 +103,7 @@ spec:
       securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
       containers:
         - name: worker
-          image: ghcr.io/your-org/loreline-intelligence:1.0.0
+          image: ghcr.io/your-org/loreline-intelligence:1.1.0
           command: [loreline-worker]
           envFrom: [{ configMapRef: { name: loreline-config } }, { secretRef: { name: loreline-secrets } }]
           resources: { requests: { cpu: 250m, memory: 256Mi }, limits: { cpu: "2", memory: 1Gi } }
@@ -122,6 +123,16 @@ kind: PodDisruptionBudget
 metadata: { name: gateway, namespace: loreline }
 spec: { minAvailable: 2, selector: { matchLabels: { app: gateway } } }
 ---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: intelligence, namespace: loreline }
+spec: { minAvailable: 1, selector: { matchLabels: { app: intelligence } } }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: worker, namespace: loreline }
+spec: { minAvailable: 1, selector: { matchLabels: { app: worker } } }
+---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata: { name: default-deny, namespace: loreline }
@@ -129,17 +140,39 @@ spec: { podSelector: {}, policyTypes: [Ingress, Egress] }
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: { name: application-traffic, namespace: loreline }
+metadata: { name: gateway-ingress, namespace: loreline }
+spec:
+  podSelector: { matchLabels: { app: gateway } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: ingress-nginx } }
+      ports: [{ protocol: TCP, port: 8080 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: intelligence-ingress, namespace: loreline }
+spec:
+  podSelector: { matchLabels: { app: intelligence } }
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ podSelector: { matchLabels: { app: gateway } } }]
+      ports: [{ protocol: TCP, port: 8090 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: application-egress, namespace: loreline }
 spec:
   podSelector: {}
-  policyTypes: [Ingress, Egress]
-  ingress:
-    - from: [{ namespaceSelector: {} }]
-      ports: [{ protocol: TCP, port: 8080 }, { protocol: TCP, port: 8090 }]
+  policyTypes: [Egress]
   egress:
     - to: [{ podSelector: {} }]
-    - to: [{ namespaceSelector: {} }]
-      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 443 }, { protocol: TCP, port: 5432 }]
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+          podSelector: { matchLabels: { k8s-app: kube-dns } }
+      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+    - to: [{ ipBlock: { cidr: 0.0.0.0/0 } }]
+      ports: [{ protocol: TCP, port: 443 }, { protocol: TCP, port: 5432 }]
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -151,4 +184,4 @@ spec:
   tls: [{ hosts: [knowledge.example.com], secretName: loreline-tls }]
   rules:
     - host: knowledge.example.com
-      http: { paths: [{ path: /, pathType: Prefix, backend: { service: { name: gateway, port: { number: 8080 } } } }] }
+      http: { paths: [{ path: /v1, pathType: Prefix, backend: { service: { name: gateway, port: { number: 8080 } } } }] }

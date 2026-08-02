@@ -8,7 +8,7 @@ import threading
 import time
 from typing import Any
 
-from psycopg import Connection
+from psycopg import Connection, OperationalError
 from psycopg.rows import dict_row
 
 from .config import settings
@@ -19,6 +19,7 @@ from .connectors import build_connector
 logging.basicConfig(level=logging.INFO,format='{"time":"%(asctime)s","level":"%(levelname)s","message":"%(message)s"}')
 log=logging.getLogger("loreline.worker")
 stop=threading.Event()
+VERSION="1.1.0"
 
 
 def claim(conn: Connection[Any], worker_id: str) -> dict[str, Any] | None:
@@ -43,7 +44,6 @@ def process_ingest(conn: Connection[Any], job: dict[str, Any]) -> None:
             vector=embedding(part)
             conn.execute("INSERT INTO chunks(tenant_id,document_id,candidate_id,ordinal,content,content_sha256,embedding) VALUES(%s,%s,%s,%s,%s,%s,%s)",(doc["tenant_id"],document_id,candidate,ordinal,part,fingerprint(part),vector))
         conn.execute("UPDATE documents SET state='review',processed_at=now(),object_key=COALESCE(%s,object_key) WHERE id=%s",(object_key,document_id))
-        conn.execute("INSERT INTO outbox(tenant_id,topic,payload) VALUES(%s,'candidate.ready',jsonb_build_object('candidate_id',(%s)::text))",(doc["tenant_id"],candidate))
 
 
 def process_index(conn: Connection[Any], job: dict[str, Any]) -> None:
@@ -80,25 +80,46 @@ def maintenance(conn:Connection[Any])->None:
     with conn.transaction():
         conn.execute("UPDATE jobs SET status='failed',last_error='worker lease expired',locked_at=NULL,locked_by=NULL,run_after=now() WHERE status='running' AND locked_at<now()-interval '15 minutes'")
         conn.execute("DELETE FROM idempotency_keys WHERE expires_at<now()")
+        conn.execute("DELETE FROM worker_heartbeats WHERE heartbeat_at<now()-interval '7 days'")
+        conn.execute("DELETE FROM jobs WHERE status='succeeded' AND finished_at<now()-interval '30 days'")
         conn.execute("""INSERT INTO jobs(tenant_id,kind,payload) SELECT d.tenant_id,'retire',jsonb_build_object('document_id',d.id::text) FROM documents d JOIN tenants t ON t.id=d.tenant_id WHERE d.state='approved' AND d.processed_at<now()-(COALESCE((t.settings->>'freshness_days')::int,365)*interval '1 day') AND NOT EXISTS(SELECT 1 FROM jobs j WHERE j.kind='retire' AND j.payload->>'document_id'=d.id::text AND j.status IN ('queued','running')) LIMIT 500""")
 
-def run() -> None:
-    cfg=settings()
-    if not cfg.database_url: raise RuntimeError("LORELINE_DATABASE_URL is required")
-    worker_id=cfg.worker_id+"@"+socket.gethostname(); log.info("worker started: %s",worker_id)
-    with Connection.connect(cfg.database_url,row_factory=dict_row,autocommit=True) as conn:
+def heartbeat(conn:Connection[Any],worker_id:str)->None:
+    conn.execute("""INSERT INTO worker_heartbeats(worker_id,hostname,version) VALUES(%s,%s,%s) ON CONFLICT(worker_id) DO UPDATE SET hostname=excluded.hostname,version=excluded.version,heartbeat_at=now()""",(worker_id,socket.gethostname(),VERSION))
+
+def process_job(conn:Connection[Any],job:dict[str,Any])->None:
+    handlers={"ingest":process_ingest,"index":process_index,"retire":process_retire,"sync":process_sync}
+    handler=handlers.get(job["kind"])
+    if handler is None:raise ValueError(f"unsupported job kind: {job['kind']}")
+    handler(conn,job)
+
+def work_connection(cfg:Any,worker_id:str)->None:
+    with Connection.connect(cfg.database_url,row_factory=dict_row,autocommit=True,connect_timeout=10) as conn:
         last_maintenance=0.0
         while not stop.is_set():
-            if time.monotonic()-last_maintenance>60:maintenance(conn);last_maintenance=time.monotonic()
+            if time.monotonic()-last_maintenance>15:
+                maintenance(conn);heartbeat(conn,worker_id);last_maintenance=time.monotonic()
             job=claim(conn,worker_id)
-            if not job: stop.wait(cfg.worker_poll_seconds); continue
+            if not job:stop.wait(cfg.worker_poll_seconds);continue
             error=None
-            try:
-                {"ingest":process_ingest,"index":process_index,"retire":process_retire,"sync":process_sync}.get(job["kind"],lambda c,j:None)(conn,job)
+            try:process_job(conn,job)
             except Exception as exc:
                 error=exc;log.exception("job failed: %s",job["id"])
                 if job["kind"]=="sync":conn.execute("UPDATE sources SET last_error=%s WHERE id=%s",(str(exc)[:2000],job["payload"].get("source_id")))
             finish(conn,job,error)
+
+def run() -> None:
+    cfg=settings()
+    if not cfg.database_url: raise RuntimeError("LORELINE_DATABASE_URL is required")
+    store=ObjectStore(cfg)
+    if not store.enabled and not cfg.allow_database_only:raise RuntimeError("object storage is required; set LORELINE_ALLOW_DATABASE_ONLY=true only for tests")
+    worker_id=cfg.worker_id+"@"+socket.gethostname(); log.info("worker started: %s",worker_id)
+    delay=1.0
+    while not stop.is_set():
+        try:work_connection(cfg,worker_id);delay=1.0
+        except OperationalError:
+            log.exception("database connection lost; retrying in %.1f seconds",delay)
+            stop.wait(delay);delay=min(delay*2,30.0)
     log.info("worker stopped")
 
 def main() -> None:

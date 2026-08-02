@@ -19,9 +19,16 @@ class Settings(BaseSettings):
     provider_api_key: str = ""
     provider_model: str = ""
     max_question_chars: int = 4000
-    max_documents: int = 1000
+    max_documents: int = 25
     chunk_chars: int = 1200
     chunk_overlap: int = 160
+    connector_allowed_hosts: str = ""
+    connector_allow_http: bool = False
+    allow_database_only: bool = False
+
+    @property
+    def allowed_connector_hosts(self) -> set[str]:
+        return {host.strip().lower() for host in self.connector_allowed_hosts.split(",") if host.strip()}
 
     @property
     def host_port(self) -> tuple[str, int]:

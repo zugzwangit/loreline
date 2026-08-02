@@ -5,14 +5,14 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class Document(BaseModel):
-    id: str
-    title: str
-    content: str
-    source: str = "Unknown"
+    id: str = Field(min_length=1, max_length=200)
+    title: str = Field(min_length=1, max_length=500)
+    content: str = Field(max_length=20000)
+    source: str = Field(default="Unknown", max_length=500)
 
 class RetrieveRequest(BaseModel):
     question: str = Field(min_length=1, max_length=4000)
-    documents: list[Document] = Field(max_length=1000)
+    documents: list[Document] = Field(max_length=25)
 
     @field_validator("question")
     @classmethod

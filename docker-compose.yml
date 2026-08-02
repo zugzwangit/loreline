@@ -16,7 +16,7 @@ services:
     networks: ["data"]
 
   minio:
-    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
     command: server /data --console-address :9001
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-loreline-local}
@@ -28,6 +28,19 @@ services:
       timeout: 3s
       retries: 20
     restart: unless-stopped
+    networks: ["data"]
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - "mc alias set local http://minio:9000 \"$$MINIO_ROOT_USER\" \"$$MINIO_ROOT_PASSWORD\" && mc mb --ignore-existing local/loreline-documents"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-loreline-local}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-loreline-local-secret}
+    depends_on:
+      minio: { condition: service_healthy }
+    restart: "no"
     networks: ["data"]
 
   intelligence:
@@ -58,11 +71,14 @@ services:
       LORELINE_OBJECT_ACCESS_KEY: ${MINIO_ROOT_USER:-loreline-local}
       LORELINE_OBJECT_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-loreline-local-secret}
       LORELINE_WORKER_ID: worker
+      LORELINE_CONNECTOR_ALLOWED_HOSTS: ${LORELINE_CONNECTOR_ALLOWED_HOSTS:-}
+      LORELINE_CONNECTOR_CREDENTIAL: ${LORELINE_CONNECTOR_CREDENTIAL:-}
+      LORELINE_CONNECTOR_TOKEN: ${LORELINE_CONNECTOR_TOKEN:-}
     depends_on:
       postgres: { condition: service_healthy }
-      minio: { condition: service_healthy }
+      minio-init: { condition: service_completed_successfully }
     restart: unless-stopped
-    networks: ["data"]
+    networks: ["data","egress"]
 
   gateway:
     build: ./services/gateway
@@ -120,6 +136,7 @@ services:
 networks:
   app: {}
   data: { internal: true }
+  egress: {}
 volumes:
   postgres-data: {}
   object-data: {}

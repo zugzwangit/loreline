@@ -16,6 +16,7 @@ Source material is untrusted data. It is normalized as text and never interprete
 - Idempotency keys for ingestion writes
 - Immutable attribution and before/after state for privileged changes
 - Private object storage with server-side encryption
+- Operator-controlled connector hostname allowlists and a dedicated connector-secret namespace to prevent SSRF and credential exfiltration
 - Non-root, read-only containers with dropped Linux capabilities
 - Default-deny Kubernetes network policy and no service-account token mounting
 - Dependency updates and CodeQL scanning in GitHub

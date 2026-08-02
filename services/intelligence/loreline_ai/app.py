@@ -26,7 +26,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Loreline Intelligence", version="1.0.0", docs_url=None, redoc_url=None, lifespan=lifespan)
+app = FastAPI(title="Loreline Intelligence", version="1.1.0", docs_url=None, redoc_url=None, lifespan=lifespan)
 
 
 @app.exception_handler(RequestValidationError)
@@ -36,7 +36,7 @@ async def validation_error(request: Request, exc: RequestValidationError) -> JSO
 
 
 @app.get("/livez")
-async def livez() -> dict[str, str]: return {"status":"ok","service":"loreline-intelligence","version":"1.0.0"}
+async def livez() -> dict[str, str]: return {"status":"ok","service":"loreline-intelligence","version":"1.1.0"}
 
 @app.get("/readyz")
 async def readyz(request: Request) -> dict[str, str]:

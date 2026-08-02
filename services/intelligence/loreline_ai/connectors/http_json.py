@@ -1,8 +1,9 @@
 from __future__ import annotations
-import os
 from typing import Any
 import httpx
+from loreline_ai.config import Settings
 from .base import SourceRecord
+from .security import credential, validate_url
 
 def nested(value:Any,path:str,default:Any="")->Any:
     for part in path.split("."):
@@ -11,8 +12,8 @@ def nested(value:Any,path:str,default:Any="")->Any:
     return value
 
 class HTTPJSONConnector:
-    def __init__(self,config:dict[str,Any]):
-        self.config=config;self.url=str(config["url"]);self.records_path=str(config.get("records_path","items"));self.id_path=str(config.get("id_path","id"));self.title_path=str(config.get("title_path","title"));self.content_path=str(config.get("content_path","content"));self.cursor_path=str(config.get("cursor_path","next_cursor"));self.credential=os.getenv(str(config.get("credential_env","")),"")
+    def __init__(self,config:dict[str,Any],cfg:Settings):
+        self.config=config;self.url=validate_url(str(config["url"]),cfg);self.records_path=str(config.get("records_path","items"));self.id_path=str(config.get("id_path","id"));self.title_path=str(config.get("title_path","title"));self.content_path=str(config.get("content_path","content"));self.cursor_path=str(config.get("cursor_path","next_cursor"));self.credential=credential(config)
     def fetch(self,cursor:dict[str,Any])->tuple[list[SourceRecord],dict[str,Any]]:
         headers={"Accept":"application/json"}
         if self.credential:headers["Authorization"]="Bearer "+self.credential

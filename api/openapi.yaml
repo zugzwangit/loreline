@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Loreline Control Plane API
-  version: 1.0.0
+  version: 1.1.0
   description: Multi-tenant knowledge ingestion, review, retrieval, and feedback API.
 servers: [{ url: https://knowledge.example.com }]
 security: [{ bearerAuth: [] }]
@@ -112,7 +112,7 @@ components:
       properties: { type: { type: string, format: uri }, title: { type: string }, status: { type: integer }, code: { type: string }, detail: {}, request_id: { type: string } }
     Dashboard:
       type: object
-      properties: { documents: { type: integer }, approved_knowledge: { type: integer }, needs_review: { type: integer }, active_jobs: { type: integer }, answer_quality: { type: number } }
+      properties: { workspace_name: { type: string }, documents: { type: integer }, approved_knowledge: { type: integer }, needs_review: { type: integer }, active_jobs: { type: integer }, workers_online: { type: integer }, questions_resolved: { type: integer }, answer_quality: { type: number }, freshness: { type: number } }
     Source:
       type: object
       required: [id, kind, name, status]

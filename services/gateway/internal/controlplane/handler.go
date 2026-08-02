@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -50,7 +51,7 @@ func NewAPI(pool *pgxpool.Pool, cfg Config) http.Handler {
 	return a.middleware.Wrap(mux)
 }
 func (a *API) live(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, map[string]any{"status": "ok", "service": "loreline-gateway", "version": "1.0.0"})
+	writeJSON(w, 200, map[string]any{"status": "ok", "service": "loreline-gateway", "version": "1.1.0"})
 }
 func (a *API) ready(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
@@ -95,7 +96,7 @@ func (a *API) createSource(w http.ResponseWriter, r *http.Request) {
 	if err := decode(w, r, a.cfg.MaxBodyBytes, &in); err != nil {
 		return
 	}
-	if !oneOf(in.Kind, "ticketing", "wiki", "drive", "webhook", "upload", "api") || strings.TrimSpace(in.Name) == "" {
+	if !oneOf(in.Kind, "ticketing", "wiki", "drive", "webhook", "upload", "api") || strings.TrimSpace(in.Name) == "" || len(in.Name) > 160 {
 		writeProblem(w, 422, "validation_error", "kind and name are required", requestID(r))
 		return
 	}
@@ -108,6 +109,10 @@ func (a *API) createSource(w http.ResponseWriter, r *http.Request) {
 			writeProblem(w, 422, "secret_in_config", "Store credentials in the secret manager and reference them by credential_env", requestID(r))
 			return
 		}
+	}
+	if err := validateSourceConfig(in.Config); err != nil {
+		writeProblem(w, 422, "invalid_source_config", err.Error(), requestID(r))
+		return
 	}
 	out, err := a.repo.CreateSource(r.Context(), p, in.Kind, in.Name, in.Config, requestID(r))
 	if err != nil {
@@ -188,7 +193,7 @@ func (a *API) ask(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, 422, "validation_error", "question is required", requestID(r))
 		return
 	}
-	docs, err := a.repo.SearchApprovedDocuments(r.Context(), p.TenantID, in.Question, 100)
+	docs, err := a.repo.SearchApprovedDocuments(r.Context(), p.TenantID, in.Question, 25)
 	if err != nil {
 		respond(w, r, nil, err)
 		return
@@ -227,7 +232,7 @@ func (a *API) stream(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, 422, "validation_error", "question is required", requestID(r))
 		return
 	}
-	docs, err := a.repo.SearchApprovedDocuments(r.Context(), p.TenantID, in.Question, 100)
+	docs, err := a.repo.SearchApprovedDocuments(r.Context(), p.TenantID, in.Question, 25)
 	if err != nil {
 		respond(w, r, nil, err)
 		return
@@ -389,6 +394,14 @@ func respond(w http.ResponseWriter, r *http.Request, v any, err error) {
 		writeProblem(w, 404, "not_found", "Resource not found", requestID(r))
 		return
 	}
+	if errors.Is(err, ErrConflict) {
+		writeProblem(w, 409, "conflict", err.Error(), requestID(r))
+		return
+	}
+	if errors.Is(err, ErrValidation) {
+		writeProblem(w, 422, "validation_error", err.Error(), requestID(r))
+		return
+	}
 	slog.Error("request failed", "request_id", requestID(r), "error", err)
 	writeProblem(w, 500, "internal_error", "The operation could not be completed", requestID(r))
 }
@@ -432,4 +445,34 @@ func oneOf(v string, values ...string) bool {
 		}
 	}
 	return false
+}
+
+func validateSourceConfig(raw json.RawMessage) error {
+	var cfg struct {
+		Provider      string `json:"provider"`
+		URL           string `json:"url"`
+		BaseURL       string `json:"base_url"`
+		CredentialEnv string `json:"credential_env"`
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return errors.New("config must be a JSON object")
+	}
+	if cfg.Provider == "" {
+		return nil
+	}
+	if !oneOf(cfg.Provider, "confluence", "zendesk", "http_json") {
+		return errors.New("provider must be confluence, zendesk, or http_json")
+	}
+	endpoint := cfg.BaseURL
+	if cfg.Provider == "http_json" {
+		endpoint = cfg.URL
+	}
+	parsed, err := url.Parse(endpoint)
+	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil {
+		return errors.New("connector endpoint must be an HTTPS URL without embedded credentials")
+	}
+	if !strings.HasPrefix(cfg.CredentialEnv, "LORELINE_CONNECTOR_") || len(cfg.CredentialEnv) > 128 {
+		return errors.New("credential_env must use the LORELINE_CONNECTOR_ prefix")
+	}
+	return nil
 }

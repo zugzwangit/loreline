@@ -15,7 +15,8 @@ import (
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
-		resp, err := http.Get("http://127.0.0.1:8080/livez")
+		client := &http.Client{Timeout: 2 * time.Second}
+		resp, err := client.Get("http://127.0.0.1:8080/livez")
 		if err != nil || resp.StatusCode != http.StatusOK {
 			os.Exit(1)
 		}
