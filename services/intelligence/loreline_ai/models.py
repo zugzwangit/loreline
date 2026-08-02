@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -9,6 +10,7 @@ class Document(BaseModel):
     title: str = Field(min_length=1, max_length=500)
     content: str = Field(max_length=20000)
     source: str = Field(default="Unknown", max_length=500)
+
 
 class RetrieveRequest(BaseModel):
     question: str = Field(min_length=1, max_length=4000)
@@ -22,10 +24,12 @@ class RetrieveRequest(BaseModel):
             raise ValueError("question cannot be blank")
         return value
 
+
 class Citation(BaseModel):
     id: str
     title: str
     source: str
+
 
 class Answer(BaseModel):
     answer: str

@@ -4,6 +4,7 @@ import math
 import re
 from collections import Counter
 from typing import Any
+
 from .ingestion import embedding
 
 TOKEN = re.compile(r"[a-z0-9]+")
@@ -26,7 +27,7 @@ def score(question: str, document: dict[str, Any]) -> float:
     lexical = (overlap + title_bonus) / norm if norm else 0.0
     query_vector = embedding(question)
     doc_vector = embedding(f"{document.get('title', '')} {document.get('content', '')}")
-    semantic = sum(a * b for a, b in zip(query_vector, doc_vector))
+    semantic = sum(a * b for a, b in zip(query_vector, doc_vector, strict=True))
     return max(0.0, 0.72 * lexical + 0.28 * semantic)
 
 
@@ -52,5 +53,8 @@ def answer_question(question: str, documents: list[dict[str, Any]], limit: int =
             cited.append(doc)
     answer = " ".join(statements)[:4000]
     confidence = min(0.99, 0.72 + sum(value for value, _ in selected) / (4 * len(selected)))
-    citations = [{"id": doc.get("id", ""), "title": doc.get("title", "Untitled"), "source": doc.get("source", "Unknown")} for doc in cited]
+    citations = [
+        {"id": doc.get("id", ""), "title": doc.get("title", "Untitled"), "source": doc.get("source", "Unknown")}
+        for doc in cited
+    ]
     return {"answer": answer, "confidence": round(confidence, 2), "citations": citations, "grounded": True}

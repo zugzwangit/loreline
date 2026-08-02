@@ -4,9 +4,9 @@ Loreline is a production-oriented, multi-tenant knowledge operations platform. I
 
 ## System packages
 
-- `services/gateway`: Go control plane, tenant isolation, hashed API-key authentication, RBAC, PostgreSQL migrations, idempotent writes, audit, rate limits, health, metrics, and graceful shutdown
-- `services/intelligence`: Python FastAPI retrieval service, provider abstraction, SSE streaming, text extraction, chunking, fingerprinting, embeddings, and durable job worker
-- `app`: responsive operations console with a server-only authenticated API proxy; it clearly reports whether it is connected to durable services
+- [`services/gateway`](services/gateway/README.md): Go control plane, tenant isolation, hashed API-key authentication, RBAC, PostgreSQL migrations, idempotent writes, audit, rate limits, health, metrics, and graceful shutdown
+- [`services/intelligence`](services/intelligence/README.md): Python FastAPI retrieval service, provider abstraction, SSE streaming, text extraction, chunking, fingerprinting, embeddings, and durable job worker
+- `app`: responsive operations console with feature modules, shared domain contracts, and a server-only authenticated API proxy
 - `api/openapi.yaml`: versioned HTTP contract
 - `deploy`: Compose stack, TLS edge, Prometheus/Grafana configuration, and hardened Kubernetes resources
 - `docs`: architecture, production, security, backup/restore, and incident response documentation
@@ -36,6 +36,7 @@ Anonymous proxy mode is for local development only. The hosted private console u
 ## Verification
 
 ```bash
+python scripts/verify_structure.py
 pnpm test
 cd services/intelligence && pip install -e '.[test]' && pytest --cov=loreline_ai
 cd ../gateway && go test -race ./...
@@ -51,6 +52,7 @@ Use managed PostgreSQL and S3-compatible storage, a secret manager, TLS ingress/
 Read these before deployment:
 
 - [Architecture](docs/architecture.md)
+- [Repository layout](docs/repository-layout.md)
 - [Production operations and SLOs](docs/production.md)
 - [Security model](docs/security.md)
 - [Backup and restore](docs/runbooks/backup-restore.md)

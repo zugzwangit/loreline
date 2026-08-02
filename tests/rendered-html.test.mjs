@@ -10,11 +10,19 @@ async function application() {
 
 async function dispatch(request) {
   const worker = await application();
-  return worker.fetch(request, { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } }, { waitUntil() {}, passThroughOnException() {} });
+  return worker.fetch(
+    request,
+    {
+      ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) },
+    },
+    { waitUntil() {}, passThroughOnException() {} },
+  );
 }
 
 test("server-renders the Loreline application", async () => {
-  const response = await dispatch(new Request("http://localhost/", { headers: { accept: "text/html" } }));
+  const response = await dispatch(
+    new Request("http://localhost/", { headers: { accept: "text/html" } }),
+  );
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
   const html = await response.text();
@@ -29,18 +37,22 @@ test("server-renders the Loreline application", async () => {
 });
 
 test("server proxy requires an authenticated operator", async () => {
-  const response = await dispatch(new Request("http://localhost/api/loreline/v1/dashboard"));
+  const response = await dispatch(
+    new Request("http://localhost/api/loreline/v1/dashboard"),
+  );
   assert.equal(response.status, 401);
   assert.equal((await response.json()).code, "unauthorized");
 });
 
 test("server proxy rejects non-UUID resource paths before forwarding", async () => {
-  const response = await dispatch(new Request("http://localhost/api/loreline/v1/sources/not-a-uuid/sync", {
-    headers: {
-      "oai-authenticated-user-id": "operator-1",
-      "oai-authenticated-user-email": "operator@example.com",
-    },
-  }));
+  const response = await dispatch(
+    new Request("http://localhost/api/loreline/v1/sources/not-a-uuid/sync", {
+      headers: {
+        "oai-authenticated-user-id": "operator-1",
+        "oai-authenticated-user-email": "operator@example.com",
+      },
+    }),
+  );
   assert.equal(response.status, 404);
   assert.equal((await response.json()).code, "not_found");
 });

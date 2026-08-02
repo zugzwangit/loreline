@@ -2,10 +2,19 @@ import unittest
 
 from loreline_ai.engine import answer_question, score, tokenize
 
-
 DOCS = [
-    {"id": "KB-1", "title": "SSO access reset", "content": "Wait 15 minutes, then retry the identity portal.", "source": "Runbook"},
-    {"id": "KB-2", "title": "Parental leave", "content": "Eligible employees receive sixteen weeks of paid leave.", "source": "Policy"},
+    {
+        "id": "KB-1",
+        "title": "SSO access reset",
+        "content": "Wait 15 minutes, then retry the identity portal.",
+        "source": "Runbook",
+    },
+    {
+        "id": "KB-2",
+        "title": "Parental leave",
+        "content": "Eligible employees receive sixteen weeks of paid leave.",
+        "source": "Policy",
+    },
 ]
 
 

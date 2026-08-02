@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=8,<9", "pytest-cov>=6,<7"]
+test = ["pytest>=8,<9", "pytest-cov>=6,<7", "ruff>=0.12,<1"]
 
 [project.scripts]
 loreline-intelligence = "loreline_ai.app:main"
@@ -26,3 +26,11 @@ loreline-worker = "loreline_ai.worker:main"
 
 [tool.setuptools.packages.find]
 include = ["loreline_ai*"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]

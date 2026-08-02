@@ -71,4 +71,6 @@ def normalize(title: str, content: str, media_type: str, chunk_size: int, overla
         raise ValueError("document has insufficient extractable text")
     parts = chunks(text, chunk_size, overlap)
     confidence = min(0.99, 0.72 + min(len(text), 5000) / 25000 + (0.05 if len(parts) > 1 else 0))
-    return CandidateResult(title=SPACE.sub(" ", title).strip(), content=text, confidence=round(confidence, 3), chunks=parts)
+    return CandidateResult(
+        title=SPACE.sub(" ", title).strip(), content=text, confidence=round(confidence, 3), chunks=parts
+    )
