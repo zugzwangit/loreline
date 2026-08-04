@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=8,<9", "pytest-cov>=6,<7", "ruff>=0.12,<1"]
+test = ["pytest>=8,<10", "pytest-cov>=6,<8", "ruff>=0.12,<1"]
 
 [project.scripts]
 loreline-intelligence = "loreline_ai.app:main"
