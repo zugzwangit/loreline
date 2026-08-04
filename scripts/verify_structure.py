@@ -15,6 +15,7 @@ REQUIRED = {
     "deploy/kubernetes.yaml",
     "docs/repository-layout.md",
     "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
     "services/gateway/README.md",
     "services/gateway/go.sum",
     "services/intelligence/README.md",
@@ -47,7 +48,11 @@ def tracked_files() -> set[str]:
         capture_output=True,
         text=True,
     )
-    return {line.strip().replace("\\", "/") for line in result.stdout.splitlines() if line.strip()}
+    return {
+        line.strip().replace("\\", "/")
+        for line in result.stdout.splitlines()
+        if line.strip()
+    }
 
 
 def main() -> None:
@@ -56,14 +61,17 @@ def main() -> None:
     forbidden = sorted(
         path
         for path in tracked
-        if (ROOT / path).exists() and (path in FORBIDDEN_FILES or path.startswith(FORBIDDEN_PREFIXES))
+        if (ROOT / path).exists()
+        and (path in FORBIDDEN_FILES or path.startswith(FORBIDDEN_PREFIXES))
     )
     if missing or forbidden:
         details = []
         if missing:
             details.append("missing required files: " + ", ".join(missing))
         if forbidden:
-            details.append("generated or starter files are tracked: " + ", ".join(forbidden))
+            details.append(
+                "generated or starter files are tracked: " + ", ".join(forbidden)
+            )
         raise SystemExit("; ".join(details))
     print(f"Repository structure verified ({len(tracked)} tracked files).")
 
